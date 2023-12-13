@@ -1,0 +1,646 @@
+========================================================================================
+Centro....: Universidad Técnica Nacional
+Sede......: Pacífico
+Carrera...: Tecnologías de Información
+Curso.....: ITI-522 - Computación en la Nube
+Periodo...: 2-2023
+Documento.: Implementación de API-Restful con NodeJS (JavaScript) y MongoDB
+Objetivos.: Implementar un segundo servicio API con JavaScript, utilizando
+            el entorno de producción con pm2 y NGINX como proxy principal
+Profesor..: Jorge Ruiz (york)
+========================================================================================
+
+Paso 01 - Create new project 
+
+	- mkdir /apps/mongologin
+	- cd /apps/mongologin
+			
+	- npm init  (complete the required fields)
+	- npm install express mongoose cors cookie-session jsonwebtoken bcryptjs --save
+
+
+Paso 02 - Create index.js or server.js
+
+		- Write the next code:
+		
+			const express = require("express");
+			const cors = require("cors");
+			const cookieSession = require("cookie-session");
+
+			const app = express();
+
+			var corsOptions = {
+				origin: "http://localhost:5010"
+			};
+
+			app.use(cors(corsOptions));
+
+			// parse requests of content-type - application/json
+			app.use(express.json());
+
+			// parse requests of content-type - application/x-www-form-urlencoded
+			app.use(express.urlencoded({ extended: true }));
+
+			app.use(
+				cookieSession({
+					name: "demoyork-session",
+					secret: "COOKIE_SECRET", // should use as secret environment variable
+					httpOnly: true
+				})
+			);
+
+			// simple route
+			app.get("/", (req, res) => {
+				res.json({ message: "Welcome to DemoYork application." });
+			});
+
+			// set port, listen for requests
+			const PORT = process.env.PORT || 5010;
+			app.listen(PORT, () => {
+				console.log(`Server is running on port ${PORT}.`);
+			});	
+	
+		- Save changes
+	
+
+Paso 03 - Config mongoDB access
+
+	- In root folder create file dbconfig.js
+	
+	- Write the next code:
+	
+		module.exports = {
+		  HOST: "10.236.2.142",
+		  PORT: 27017,
+		  DB: "DemoLogin"
+		};
+		
+	- Save changes	
+	
+	
+Paso 04 - Create models
+
+	- In the root project create folder models
+	
+	- Create models/mdl_Role.js
+	
+		- Write the next code:
+			
+			const mongoose = require("mongoose");
+
+			const Role = mongoose.model(
+			  "Role",
+			  new mongoose.Schema({
+				name: String
+			  })
+			);
+			
+			module.exports = Role;			
+			
+		- Save changes
+	
+	
+	- Create models/mdl_User.js
+	
+		- Write the next code:
+		
+			const mongoose = require("mongoose");
+
+			const User = mongoose.model(
+			  "User",
+			  new mongoose.Schema({
+				username: String,
+				email: String,
+				password: String,
+				roles: [
+				  {
+					type: mongoose.Schema.Types.ObjectId,
+					ref: "Role"
+				  }
+				]
+			  })
+			);
+
+			module.exports = User;
+	
+		- Save changes
+		
+		
+	- Create models/index.js	
+	
+		- Write the next code:
+		
+			const mongoose = require('mongoose');
+			mongoose.Promise = global.Promise;
+
+			const db = {};
+
+			db.mongoose = mongoose;
+
+			db.user = require("./user.model");
+			db.role = require("./role.model");
+
+			db.ROLES = ["user", "admin", "professor"];
+
+			module.exports = db;		
+		
+		- Save changes
+	
+	
+Paso 05 - Update index or server.js (root project)
+
+		- After sentence -> app.use(cors(corsOptions));
+		
+		- Write the next code:
+		
+			const db = require("./models");
+			const Role = db.role;
+
+			db.mongoose
+				.connect(`mongodb://${dbConfig.HOST}:${dbConfig.PORT}/${dbConfig.DB}`, {
+					useNewUrlParser: true,
+					useUnifiedTopology: true
+				})
+				.then(() => {
+					console.log("Successfully connect to MongoDB.");
+					initial();
+				})
+				.catch(err => {
+					console.error("Connection error", err);
+					process.exit();
+				});
+
+			function initial() {
+				Role.estimatedDocumentCount((err, count) => {
+					if (!err && count === 0) {
+						new Role({
+							name: "user"
+						}).save(err => {
+							if (err) {
+								console.log("error", err);
+							}
+
+							console.log("added 'user' to roles collection");
+						});
+
+						new Role({
+							name: "professor"
+						}).save(err => {
+							if (err) {
+								console.log("error", err);
+							}
+
+							console.log("added 'professor' to roles collection");
+						});
+
+						new Role({
+							name: "admin"
+						}).save(err => {
+							if (err) {
+								console.log("error", err);
+							}
+
+							console.log("added 'admin' to roles collection");
+						});
+					}
+				});
+			}
+		
+		- Save changes
+		
+		
+Paso 06 - Create file app/config/cfg_Auth.js 
+
+		- Write the next code:
+		
+			module.exports = {
+			  secret: "parda99*"
+			};
+		
+		- Save changes
+		
+		
+Paso 07 - Create middleware functions
+
+		- Create file middlewares/verifySignUp.js
+		
+			- Write the next code:
+		
+				const db = require("../models");
+				const ROLES = db.ROLES;
+				const User = db.user;
+
+				checkDuplicateUsernameOrEmail = (req, res, next) => {
+				  // Username
+				  User.findOne({
+					username: req.body.username
+				  }).exec((err, user) => {
+					if (err) {
+					  res.status(500).send({ message: err });
+					  return;
+					}
+
+					if (user) {
+					  res.status(400).send({ message: "Failed! Username is already in use!" });
+					  return;
+					}
+
+					// Email
+					User.findOne({
+					  email: req.body.email
+					}).exec((err, user) => {
+					  if (err) {
+						res.status(500).send({ message: err });
+						return;
+					  }
+
+					  if (user) {
+						res.status(400).send({ message: "Failed! Email is already in use!" });
+						return;
+					  }
+
+					  next();
+					});
+				  });
+				};
+
+				checkRolesExisted = (req, res, next) => {
+				  if (req.body.roles) {
+					for (let i = 0; i < req.body.roles.length; i++) {
+					  if (!ROLES.includes(req.body.roles[i])) {
+						res.status(400).send({
+						  message: `Failed! Role ${req.body.roles[i]} does not exist!`
+						});
+						return;
+					  }
+					}
+				  }
+
+				  next();
+				};
+
+				const verifySignUp = {
+				  checkDuplicateUsernameOrEmail,
+				  checkRolesExisted
+				};
+
+				module.exports = verifySignUp;
+		
+			- Save changes
+						
+			
+		- Create file middlewares/authJwt.js
+		
+			- Write the next code:
+
+				const jwt = require("jsonwebtoken");
+				const config = require("../config/authcfg");
+				const db = require("../models");
+				const User = db.user;
+				const Role = db.role;
+
+				verifyToken = (req, res, next) => {
+					let token = req.session.token;
+
+					if (!token) {
+						return res.status(403).send({ message: "No token provided!" });
+					}
+
+					jwt.verify(token, config.secret, (err, decoded) => {
+						if (err) {
+							return res.status(401).send({ message: "Unauthorized!" });
+						}
+						req.userId = decoded.id;
+						next();
+					});
+				};
+
+				isAdmin = (req, res, next) => {
+					User.findById(req.userId).exec((err, user) => {
+						if (err) {
+							res.status(500).send({ message: err });
+							return;
+						}
+
+						Role.find(
+							{
+								_id: { $in: user.roles },
+							},
+							(err, roles) => {
+								if (err) {
+									res.status(500).send({ message: err });
+									return;
+								}
+
+								for (let i = 0; i < roles.length; i++) {
+									if (roles[i].name === "admin") {
+										next();
+										return;
+									}
+								}
+
+								res.status(403).send({ message: "Require Admin Role!" });
+								return;
+							}
+						);
+					});
+				};
+
+				isProfessor = (req, res, next) => {
+					User.findById(req.userId).exec((err, user) => {
+						if (err) {
+							res.status(500).send({ message: err });
+							return;
+						}
+
+						Role.find(
+							{
+								_id: { $in: user.roles },
+							},
+							(err, roles) => {
+								if (err) {
+									res.status(500).send({ message: err });
+									return;
+								}
+
+								for (let i = 0; i < roles.length; i++) {
+									if (roles[i].name === "professor") {
+										next();
+										return;
+									}
+								}
+
+								res.status(403).send({ message: "Require Professor Role!" });
+								return;
+							}
+						);
+					});
+				};
+
+				const authJwt = {
+					verifyToken,
+					isAdmin,
+					isProfessor,
+				};
+				module.exports = authJwt;
+
+			- Save changes
+			
+			
+		- Create file middlewares/index.js
+		
+			- Write the next code:	
+
+				const authJwt = require("./authJwt");
+				const verifySignUp = require("./verifySignUp");
+
+				module.exports = {
+				  authJwt,
+				  verifySignUp
+				};
+
+			- Save changes
+			
+			
+Paso 08 - Create controllers
+
+		- Create file controllers/ctrl_Auth.js
+		
+			- Write the next code:
+
+				const config = require("../config/authcfg");
+				const db = require("../models");
+				const User = db.user;
+				const Role = db.role;
+
+				var jwt = require("jsonwebtoken");
+				var bcrypt = require("bcryptjs");
+
+				exports.signup = (req, res) => {
+					const user = new User({
+						username: req.body.username,
+						email: req.body.email,
+						password: bcrypt.hashSync(req.body.password, 8),
+					});
+
+					user.save((err, user) => {
+						if (err) {
+							res.status(500).send({ message: err });
+							return;
+						}
+
+						if (req.body.roles) {
+							Role.find(
+								{
+									name: { $in: req.body.roles },
+								},
+								(err, roles) => {
+									if (err) {
+										res.status(500).send({ message: err });
+										return;
+									}
+
+									user.roles = roles.map((role) => role._id);
+									user.save((err) => {
+										if (err) {
+											res.status(500).send({ message: err });
+											return;
+										}
+
+										res.send({ message: "User was registered successfully!" });
+									});
+								}
+							);
+						} else {
+							Role.findOne({ name: "user" }, (err, role) => {
+								if (err) {
+									res.status(500).send({ message: err });
+									return;
+								}
+
+								user.roles = [role._id];
+								user.save((err) => {
+									if (err) {
+										res.status(500).send({ message: err });
+										return;
+									}
+
+									res.send({ message: "User was registered successfully!" });
+								});
+							});
+						}
+					});
+				};
+
+				exports.signin = (req, res) => {
+					User.findOne({
+						username: req.body.username,
+					})
+						.populate("roles", "-__v")
+						.exec((err, user) => {
+							if (err) {
+								res.status(500).send({ message: err });
+								return;
+							}
+
+							if (!user) {
+								return res.status(404).send({ message: "User Not found." });
+							}
+
+							var passwordIsValid = bcrypt.compareSync(
+								req.body.password,
+								user.password
+							);
+
+							if (!passwordIsValid) {
+								return res.status(401).send({ message: "Invalid Password!" });
+							}
+
+							var token = jwt.sign({ id: user.id }, config.secret, {
+								expiresIn: 86400, // 24 hours
+							});
+
+							var authorities = [];
+
+							for (let i = 0; i < user.roles.length; i++) {
+								authorities.push("ROLE_" + user.roles[i].name.toUpperCase());
+							}
+
+							req.session.token = token;
+
+							res.status(200).send({
+								id: user._id,
+								username: user.username,
+								email: user.email,
+								roles: authorities,
+							});
+						});
+				};
+
+				exports.signout = async (req, res) => {
+					try {
+						req.session = null;
+						return res.status(200).send({ message: "You've been signed out!" });
+					} catch (err) {
+						this.next(err);
+					}
+				};
+				
+			- Save changes
+
+
+		- Create file controllers/ctrl_User.js
+		
+			- Write the next code:
+			
+				exports.allAccess = (req, res) => {
+				  res.status(200).send("Public Content.");
+				};
+
+				exports.userBoard = (req, res) => {
+				  res.status(200).send("User Content.");
+				};
+
+				exports.adminBoard = (req, res) => {
+				  res.status(200).send("Admin Content.");
+				};
+
+				exports.professorBoard = (req, res) => {
+				  res.status(200).send("Professor Content.");
+				};				
+			
+			- Save changes
+			
+			
+Paso 09 - Create routes
+
+		- Create file routes/rout_Auth.js
+
+			- Write the next code:
+
+				const { verifySignUp } = require("../middlewares");
+				const controller = require("../controllers/ctrl_Auth");
+
+				module.exports = function(app) {
+				  app.use(function(req, res, next) {
+					res.header(
+					  "Access-Control-Allow-Headers",
+					  "Origin, Content-Type, Accept"
+					);
+					next();
+				  });
+
+				  app.post(
+					"/api/auth/signup",
+					[
+					  verifySignUp.checkDuplicateUsernameOrEmail,
+					  verifySignUp.checkRolesExisted
+					],
+					controller.signup
+				  );
+
+				  app.post("/api/auth/signin", controller.signin);
+
+				  app.post("/api/auth/signout", controller.signout);
+				};	
+				
+			- Save changes
+
+
+		- Create file routes/rout_User.js
+
+			- Write the next code:
+
+				const { authJwt } = require("../middlewares");
+				const controller = require("../controllers/ctrl_User");
+
+				module.exports = function(app) {
+					app.use(function(req, res, next) {
+						res.header(
+							"Access-Control-Allow-Headers",
+							"Origin, Content-Type, Accept"
+						);
+						next();
+					});
+
+					app.get("/api/test/all", controller.allAccess);
+
+					app.get("/api/test/user", [authJwt.verifyToken], controller.userBoard);
+
+					app.get(
+						"/api/test/professor",
+						[authJwt.verifyToken, authJwt.isProfessor],
+						controller.professorBoard
+					);
+
+					app.get(
+						"/api/test/admin",
+						[authJwt.verifyToken, authJwt.isAdmin],
+						controller.adminBoard
+					);
+				};		
+
+			- Save changes
+			
+			
+Paso 10 - Update index or server.js (root project)
+
+		- After the simple rooute block (near line 81)
+				
+			- Write the next code:			
+			
+				require('./routes/rout_Auth')(app);
+				require('./routes/rout_User')(app);
+				
+			- Save changes	
+			
+			
+Paso 11 - Ejecutar la aplicación
+
+	node app.js
+	
+	Para validar puede usar Postman o un webBrowser
+	
+	http://10.236.2.101:5010
+	
+	Recuerde ajustar sus direcciones IP		

@@ -1,0 +1,325 @@
+========================================================================================
+Centro....: Universidad Técnica Nacional
+Sede......: Pacífico
+Carrera...: Tecnologías de Información
+Curso.....: ITI-621 - Tecnologías y Sistemas Web III
+Periodo...: 3-2023
+Documento.: Implementación de API-Restful con NodeJS (JavaScript) y MongoDB
+Objetivos.: Instalar NGINX como proxy principal, PHP como CGI y la creación de usuarios
+            de VSFTP virtuales contra validación PAM y MySQL
+Profesor..: Jorge Ruiz (york)
+========================================================================================
+
+Paso 01 - Instalar Nginx
+	
+	apt-get install -y software-properties-common
+	apt-get update
+	apt-get install -y nginx
+
+
+Paso 02 - Instalar php8.1 
+
+	- Muestra lista de librerías disponibles de php8.1
+
+		apt-cache search php8.1 
+
+
+	- Se seleccionan las librerías por instalar. 
+	
+		apt install php8.1 php8.1-common php8.1-cli php8.1-fpm php8.1-mysql php8.1-xml php8.1-json php8.1-curl php8.1-mbstring php8.1-zip php8.1-gd php8.1-imagick php8.1-pgsql
+
+
+	- Valida que el servicio de PHP está en ejecución.
+	
+		systemctl status php8.1-fpm
+
+
+Paso 03 - Configurar Nginx para reconocer el CGI de PHP.
+
+	nano /etc/php/8.1/fpm/php.ini
+	
+
+		- activar la variable
+	
+			cgi.fix_pathinfo=0
+	
+	
+	- salvar los cambios y salir
+
+
+	- realizar los siguientes cambios
+	
+		nano /etc/nginx/sites-available/default
+
+			root /var/www/html;
+			index index.php index.html index.htm ;
+		
+			location ~ \.php$ {
+				include snippets/fastcgi-php.conf;
+
+				# With php-fpm (or other unix sockets):
+				fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+
+				# With php-cgi (or other tcp sockets):
+				# fastcgi_pass 127.0.0.1:9000;
+
+				#-----------------------------------------
+				# Agregar estas lineas
+				#-----------------------------------------
+				fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+				include fastcgi_params;
+			}
+
+ 
+	- salvar los cambios y salir
+
+	- reiniciar el servicio
+	
+		systemctl restart nginx
+
+
+Paso 04 - Probar que el servidor reconoece el CGI de PHP
+
+	mkdir /var/www/html/test
+
+	nano /var/www/html/test/index.php
+
+		<?php 
+			echo '<h3>Sitio de York</h3>'; 
+			phpinfo(); 
+		?>
+
+	- salvar los cambios y salir
+
+
+Paso 05 - Instalar MySQL Community Edition
+
+	Se asume que usted tiene estos pasos de otras guías.
+
+
+Paso 06 - Instalación del servicio FTP con usuarios virtuales.
+
+	- Crear la base de datos para los usuarios virtuales de FTP
+	
+		mysql -h localhost -u root -p
+
+			create database if not exists vsftpd charset utf8mb4;
+
+			use vsftpd;
+
+			create table usuarios(
+				usuario  varchar(15) not null primary key,
+				nombre   varchar(30) not null,  
+				contra   varchar(60) not null,
+				estado   char(1) not null
+			)engine InnoDB charset utf8mb4;
+
+			create table bitacora(
+				usuario   varchar(15),
+				mensaje   varchar(300),
+				proceso   int,
+				cliente   varchar(32),
+				fecha     datetime
+			) engine InnoDB charset utf8mb4;
+
+			alter table bitacora add constraint fk_bitUsuario foreign key(usuario) references usuarios(usuario);
+
+		
+			insert into usuarios values('york','jorge ruiz virtual', md5('parda99*'),0);
+
+
+	- Salir del MySQL
+	
+
+	- Instalar las librerías y aplicaciones 
+
+		apt-get install libpam-runtime libpam-modules libpam-mysql
+
+
+
+	- Instalar el servicio de FTP
+
+		apt-get install vsftpd
+
+
+	- Configurar el autenticador de usuarios
+
+		nano /etc/pam.d/vsftpd   
+
+			- Comentar todo código encontrado usando # al inicio de cada línea.
+			- Agregar al final las siguientes líneas de variables
+			- Recuerde modificar datos de conexión
+
+
+				#---------------------------------------------------
+				#Custom configuration, PAM-MySQL
+				#---------------------------------------------------
+				auth required pam_mysql.so verbose=0 user=root passwd=<????> host=localhost db=vsftpd table=usuarios usercolumn=usuario passwdcolumn=contra statcolumn=estado crypt=3
+
+				account required pam_mysql.so verbose=0 user=root passwd=<????> host=localhost db=vsftpd table=usuarios usercolumn=usuario passwdcolumn=contra statcolumn=estado crypt=3
+
+				#---------------------------------------------------
+				# Transaction log, is not mandatory copy below line
+				# after crypt variable in above configuration lines
+				#---------------------------------------------------
+				sqllog=true logtable=bitacora logmsgcolumn=mensaje logusercolumn=usuario logpidcolumn=proceso loghostcolumn=cliente logtimecolumn=fecha
+
+				#---------------------------------------------------
+				#Note about crypt variable
+				#---------------------------------------------------
+				#   0 para claves en texto plano sin encriptar
+				#   1 para claves encriptadas con la función crypt()
+				#   2 para claves generadas con la función PASSWORD() de MySQL deprecada
+				#   3 para claves en md5
+
+
+	- salvar los cambios
+
+
+	- Configurar el servicio de VSFTPD
+
+		mkdir /etc/vsftpd 
+		mkdir /etc/vsftpd/vacio
+		chmod 555 /etc/vsftpd/vacio
+		 
+		nano /etc/vsftpd/chroot_list Este archivo se deja en blanco 
+
+	- salvar cambios y salir
+	
+	- modificar el shell del usuario
+	
+		nano /etc/shells 
+
+			- Agregar al final del documento la siguiente línea:
+			
+				/bin/false 
+
+	- salvar cambios y salir
+
+
+	- agregar el usuario del servicio de FTP
+	
+		groupadd vsftpd
+
+		useradd -d /etc/vsftpd -s /bin/false -g nogroup vsftpd
+
+		usermod -d /etc/vsftpd/vacio -s /bin/false -g ftp ftp
+	
+	
+	- modificar el archivo de configuración del vsftpd
+	
+
+		nano /etc/vsftpd.conf 
+
+			- La siguiente es una lista de las variables que deben modificarse y mantenerse activas
+			- para que el servicio de FTP funcione como se espera. Las variables se configuran de 
+			- acorde a su aparición de principio a fin.
+ 
+				listen=NO
+				anonymous_enable=NO
+				local_enable=YES
+				write_enable=YES
+				local_umask=022
+				
+				dirmessage_enable=YES
+				xferlog_enable=YES
+				xferlog_file=/var/log/vsftpd.log		
+				nopriv_user=vsftpd		
+				
+				chroot_local_user=YES
+				chroot_list_enable=YES
+				allow_writeable_chroot=YES
+				chroot_list_file=/etc/vsftpd/chroot_list		
+				secure_chroot_dir=/etc/vsftpd/vacio
+				
+				pam_service_name=vsftpd	
+				utf8_filesystem=YES	
+				
+				----/ Agregar al final /----
+				file_open_mode=0777		
+				max_clients=100
+				max_per_ip=10
+				
+				guest_enable=YES
+				guest_username=ftp
+				
+				user_config_dir=/etc/vsftpd
+				local_root=/etc/vsftpd/vacio
+				virtual_use_local_privs=YES
+				hide_ids=YES
+		
+		
+	- salvar cambios y salir	
+
+	- Reiniciar servicio de FTP
+	
+		/etc/init.d/vsftpd restart
+
+
+Paso 07 - Crear el soporte los usuarios virtuales
+
+	- Crear la carpeta de usuarios ftp
+	
+		mkdir /home/ftpusers
+
+
+	- Crear el script para automatizar la creación de usuarios virtuales
+	
+		nano /utiles/addftpuser.sh
+
+			- Escribir el siguiente juego de instrucciones
+	
+			#-----------------------------------------
+			# Agrega el usuario a la base de datos
+			#-----------------------------------------
+			if mysql -h localhost -u root --password=<???> -e "insert into vsftpd.usuarios values('$1','$1',md5('$2'),0);"; then
+
+			   # Limpia la pantalla
+			   clear
+
+			   # Crea la carpeta del usuario virtual
+			   mkdir /home/ftpusers/$1
+
+			   # Asigna los derechos al usuario ftp sobre la carpeta del usuario virtual
+			   chown -R ftp:ftp /home/ftpusers/$1
+			   chmod -R 755 /home/ftpusers/$1
+
+			   # Crea el enlace simbolico a la carpeta de publicacion de Nginx
+			   ln /home/ftpusers/$1 /var/www/$1 -s
+
+			   # Crea el perfil del usuario virtual para cambiar la carpeta raiz de trabajo
+			   echo "local_root=/home/ftpusers/$1" > /etc/vsftpd/$1
+
+			   # Crea un mensaje de yupiiiiiii
+			   echo "Usuario registrado correctamente";
+
+			else
+
+			   # Limpia la pantalla para no presentar mensaje de MySQL
+			   clear
+
+			   # Crea mensaje no yupiiiiiii
+			   echo "No se pudo registrar el usuario";
+
+			fi
+
+
+	- salvar los cambios y salir
+	
+	
+	- Asignar el derecho de ejecución
+	
+		chmod +x /utiles/addftpuser.sh
+
+
+	- Crear usuario de prueba
+	
+		/utiles/./addftpuser.sh pericles 456
+		
+		- Recuerde el usuario es pericles y la contraseña es 456
+		
+		
+Paso 08 - Probar el servicio con FileZilla
+
+	Sea feliz...!
+	
